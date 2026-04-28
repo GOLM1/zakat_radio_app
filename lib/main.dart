@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:math' as math;
 
+import 'package:audio_session/audio_session.dart';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:just_audio/just_audio.dart';
@@ -64,10 +65,68 @@ class _RadioPageState extends State<RadioPage> {
       'https://radio.zakatfund.gov.ly/listen/zakat/radio.mp3';
 
   bool _isBusy = false;
+  bool _wasPlayingBeforeInterruption = false;
+  StreamSubscription<AudioInterruptionEvent>? _interruptionSubscription;
   Timer? _sleepTimer;
   Timer? _sleepTicker;
   Duration? _sleepDuration;
   Duration? _sleepRemaining;
+
+  @override
+  void initState() {
+    super.initState();
+    unawaited(_configureAudioSession());
+  }
+
+  Future<void> _configureAudioSession() async {
+    final session = await AudioSession.instance;
+    await session.configure(const AudioSessionConfiguration.music());
+
+    _interruptionSubscription = session.interruptionEventStream.listen((event) {
+      if (event.begin) {
+        _wasPlayingBeforeInterruption = _player.playing;
+        return;
+      }
+
+      if (_wasPlayingBeforeInterruption) {
+        unawaited(_resumeAfterInterruption(session));
+      }
+      _wasPlayingBeforeInterruption = false;
+    });
+  }
+
+  Future<void> _resumeAfterInterruption(AudioSession session) async {
+    try {
+      await session.setActive(true);
+      if (_player.processingState == ProcessingState.idle) {
+        await _loadStream();
+      }
+      await _player.play();
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('تعذر استئناف البث تلقائيا، اضغط تشغيل مرة أخرى.'),
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      }
+    }
+  }
+
+  Future<void> _loadStream() {
+    return _player.setAudioSource(
+      AudioSource.uri(
+        Uri.parse(_streamUrl),
+        tag: MediaItem(
+          id: _streamUrl,
+          album: 'صندوق الزكاة الليبي',
+          title: 'إذاعة صندوق الزكاة الليبي',
+          artist: 'البث المباشر لصندوق الزكاة الليبي',
+        ),
+      ),
+    );
+  }
 
   Future<void> _togglePlay() async {
     if (_isBusy) return;
@@ -78,17 +137,7 @@ class _RadioPageState extends State<RadioPage> {
       if (_player.playing) {
         await _player.stop();
       } else {
-        await _player.setAudioSource(
-          AudioSource.uri(
-            Uri.parse(_streamUrl),
-            tag: MediaItem(
-              id: _streamUrl,
-              album: 'صندوق الزكاة الليبي',
-              title: 'إذاعة صندوق الزكاة الليبي',
-              artist: 'البث المباشر لصندوق الزكاة الليبي',
-            ),
-          ),
-        );
+        await _loadStream();
         unawaited(_player.play());
       }
     } catch (_) {
@@ -216,6 +265,7 @@ class _RadioPageState extends State<RadioPage> {
   void dispose() {
     _sleepTimer?.cancel();
     _sleepTicker?.cancel();
+    _interruptionSubscription?.cancel();
     _player.dispose();
     super.dispose();
   }

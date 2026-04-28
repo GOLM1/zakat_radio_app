@@ -70,6 +70,7 @@ class _RadioPageState extends State<RadioPage> with WidgetsBindingObserver {
   bool _isStreamLoaded = false;
   bool _isPreparingStream = false;
   bool _isRecoveringPlayback = false;
+  AppLifecycleState _lifecycleState = AppLifecycleState.resumed;
   StreamSubscription<AudioInterruptionEvent>? _interruptionSubscription;
   StreamSubscription<bool>? _playingSubscription;
   Timer? _sleepTimer;
@@ -102,7 +103,11 @@ class _RadioPageState extends State<RadioPage> with WidgetsBindingObserver {
       }
 
       if (_wasPlayingBeforeInterruption) {
-        unawaited(_recoverPlayback(session));
+        if (_lifecycleState == AppLifecycleState.resumed) {
+          unawaited(_recoverPlayback(session));
+        } else {
+          unawaited(_ensureStreamReady().catchError((_) {}));
+        }
       }
       _wasPlayingBeforeInterruption = false;
     });
@@ -110,6 +115,7 @@ class _RadioPageState extends State<RadioPage> with WidgetsBindingObserver {
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
+    _lifecycleState = state;
     if (state == AppLifecycleState.resumed && _userWantsPlayback) {
       unawaited(_recoverPlayback());
     }
@@ -125,8 +131,10 @@ class _RadioPageState extends State<RadioPage> with WidgetsBindingObserver {
 
       for (var attempt = 0; attempt < 2 && _userWantsPlayback; attempt++) {
         await Future<void>.delayed(Duration(milliseconds: 450 + (attempt * 450)));
-        await _player.stop();
-        _isStreamLoaded = false;
+        if (attempt > 0 || !_isStreamLoaded) {
+          await _player.stop();
+          _isStreamLoaded = false;
+        }
         await _ensureStreamReady();
         await _player.play();
 
@@ -185,6 +193,7 @@ class _RadioPageState extends State<RadioPage> with WidgetsBindingObserver {
       if (_player.playing) {
         _userWantsPlayback = false;
         await _player.stop();
+        _isStreamLoaded = false;
       } else {
         _userWantsPlayback = true;
         await _ensureStreamReady();
@@ -217,6 +226,7 @@ class _RadioPageState extends State<RadioPage> with WidgetsBindingObserver {
     _sleepTimer = Timer(duration, () async {
       _userWantsPlayback = false;
       await _player.stop();
+      _isStreamLoaded = false;
       if (mounted) {
         setState(() {
           _sleepDuration = null;

@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<network-security-config>
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="true">zakatfund.gov.ly</domain>
+        <trust-anchors>
+            <certificates src="system" />
+            <certificates src="@raw/rapidssl_tls_rsa_ca_g1" />
+        </trust-anchors>
+    </domain-config>
+</network-security-config>

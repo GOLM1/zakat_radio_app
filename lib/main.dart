@@ -67,8 +67,11 @@ class _RadioPageState extends State<RadioPage> with WidgetsBindingObserver {
   bool _isBusy = false;
   bool _userWantsPlayback = false;
   bool _wasPlayingBeforeInterruption = false;
+  bool _isStreamLoaded = false;
+  bool _isPreparingStream = false;
   bool _isRecoveringPlayback = false;
   StreamSubscription<AudioInterruptionEvent>? _interruptionSubscription;
+  StreamSubscription<bool>? _playingSubscription;
   Timer? _sleepTimer;
   Timer? _sleepTicker;
   Duration? _sleepDuration;
@@ -78,12 +81,19 @@ class _RadioPageState extends State<RadioPage> with WidgetsBindingObserver {
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    _playingSubscription = _player.playingStream.listen((isPlaying) {
+      if (isPlaying && !_userWantsPlayback) {
+        _userWantsPlayback = true;
+        unawaited(_ensureStreamReady().catchError((_) {}));
+      }
+    });
     unawaited(_configureAudioSession());
   }
 
   Future<void> _configureAudioSession() async {
     final session = await AudioSession.instance;
     await session.configure(const AudioSessionConfiguration.music());
+    unawaited(_ensureStreamReady().catchError((_) {}));
 
     _interruptionSubscription = session.interruptionEventStream.listen((event) {
       if (event.begin) {
@@ -116,7 +126,8 @@ class _RadioPageState extends State<RadioPage> with WidgetsBindingObserver {
       for (var attempt = 0; attempt < 2 && _userWantsPlayback; attempt++) {
         await Future<void>.delayed(Duration(milliseconds: 450 + (attempt * 450)));
         await _player.stop();
-        await _loadStream();
+        _isStreamLoaded = false;
+        await _ensureStreamReady();
         await _player.play();
 
         await Future<void>.delayed(const Duration(milliseconds: 700));
@@ -150,6 +161,21 @@ class _RadioPageState extends State<RadioPage> with WidgetsBindingObserver {
     );
   }
 
+  Future<void> _ensureStreamReady() async {
+    while (_isPreparingStream && !_isStreamLoaded) {
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+    }
+    if (_isStreamLoaded) return;
+
+    _isPreparingStream = true;
+    try {
+      await _loadStream();
+      _isStreamLoaded = true;
+    } finally {
+      _isPreparingStream = false;
+    }
+  }
+
   Future<void> _togglePlay() async {
     if (_isBusy) return;
 
@@ -161,7 +187,7 @@ class _RadioPageState extends State<RadioPage> with WidgetsBindingObserver {
         await _player.stop();
       } else {
         _userWantsPlayback = true;
-        await _loadStream();
+        await _ensureStreamReady();
         unawaited(_player.play());
       }
     } catch (_) {
@@ -292,6 +318,7 @@ class _RadioPageState extends State<RadioPage> with WidgetsBindingObserver {
     _sleepTimer?.cancel();
     _sleepTicker?.cancel();
     _interruptionSubscription?.cancel();
+    _playingSubscription?.cancel();
     WidgetsBinding.instance.removeObserver(this);
     _player.dispose();
     super.dispose();
@@ -571,9 +598,10 @@ class _RadioCard extends StatelessWidget {
         final state = snapshot.data;
         final isPlaying = state?.playing ?? player.playing;
         final isLoading =
-            state?.processingState == ProcessingState.loading ||
-                state?.processingState == ProcessingState.buffering ||
-                isBusy;
+            isBusy ||
+                (isPlaying &&
+                    (state?.processingState == ProcessingState.loading ||
+                        state?.processingState == ProcessingState.buffering));
 
         return ClipRRect(
           borderRadius: BorderRadius.circular(28 * scale),

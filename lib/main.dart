@@ -59,13 +59,15 @@ class RadioPage extends StatefulWidget {
   State<RadioPage> createState() => _RadioPageState();
 }
 
-class _RadioPageState extends State<RadioPage> {
+class _RadioPageState extends State<RadioPage> with WidgetsBindingObserver {
   final AudioPlayer _player = AudioPlayer();
   final String _streamUrl =
       'https://radio.zakatfund.gov.ly/listen/zakat/radio.mp3';
 
   bool _isBusy = false;
+  bool _userWantsPlayback = false;
   bool _wasPlayingBeforeInterruption = false;
+  bool _isRecoveringPlayback = false;
   StreamSubscription<AudioInterruptionEvent>? _interruptionSubscription;
   Timer? _sleepTimer;
   Timer? _sleepTicker;
@@ -75,6 +77,7 @@ class _RadioPageState extends State<RadioPage> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     unawaited(_configureAudioSession());
   }
 
@@ -84,24 +87,41 @@ class _RadioPageState extends State<RadioPage> {
 
     _interruptionSubscription = session.interruptionEventStream.listen((event) {
       if (event.begin) {
-        _wasPlayingBeforeInterruption = _player.playing;
+        _wasPlayingBeforeInterruption = _userWantsPlayback;
         return;
       }
 
       if (_wasPlayingBeforeInterruption) {
-        unawaited(_resumeAfterInterruption(session));
+        unawaited(_recoverPlayback(session));
       }
       _wasPlayingBeforeInterruption = false;
     });
   }
 
-  Future<void> _resumeAfterInterruption(AudioSession session) async {
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed && _userWantsPlayback) {
+      unawaited(_recoverPlayback());
+    }
+  }
+
+  Future<void> _recoverPlayback([AudioSession? session]) async {
+    if (_isRecoveringPlayback || !_userWantsPlayback) return;
+
+    _isRecoveringPlayback = true;
     try {
+      session ??= await AudioSession.instance;
       await session.setActive(true);
-      if (_player.processingState == ProcessingState.idle) {
+
+      for (var attempt = 0; attempt < 2 && _userWantsPlayback; attempt++) {
+        await Future<void>.delayed(Duration(milliseconds: 450 + (attempt * 450)));
+        await _player.stop();
         await _loadStream();
+        await _player.play();
+
+        await Future<void>.delayed(const Duration(milliseconds: 700));
+        if (_player.playing) break;
       }
-      await _player.play();
     } catch (_) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -111,6 +131,8 @@ class _RadioPageState extends State<RadioPage> {
           ),
         );
       }
+    } finally {
+      _isRecoveringPlayback = false;
     }
   }
 
@@ -135,12 +157,15 @@ class _RadioPageState extends State<RadioPage> {
 
     try {
       if (_player.playing) {
+        _userWantsPlayback = false;
         await _player.stop();
       } else {
+        _userWantsPlayback = true;
         await _loadStream();
         unawaited(_player.play());
       }
     } catch (_) {
+      _userWantsPlayback = false;
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
@@ -164,6 +189,7 @@ class _RadioPageState extends State<RadioPage> {
     });
 
     _sleepTimer = Timer(duration, () async {
+      _userWantsPlayback = false;
       await _player.stop();
       if (mounted) {
         setState(() {
@@ -266,6 +292,7 @@ class _RadioPageState extends State<RadioPage> {
     _sleepTimer?.cancel();
     _sleepTicker?.cancel();
     _interruptionSubscription?.cancel();
+    WidgetsBinding.instance.removeObserver(this);
     _player.dispose();
     super.dispose();
   }

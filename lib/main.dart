@@ -376,6 +376,9 @@ class _RadioPageState extends State<RadioPage> with WidgetsBindingObserver {
                               _openLink('https://www.facebook.com/zakatlibya'),
                           onTelegramPressed: () =>
                               _openLink('https://t.me/zakatlibya'),
+                          onWaslPressed: () => _openLink(
+                            'https://www.facebook.com/wasl.zakatlibya',
+                          ),
                         ),
                         SizedBox(height: 10 * scale),
                         Text(
@@ -1241,6 +1244,7 @@ class _BottomDock extends StatelessWidget {
     required this.onSleepTimerPressed,
     required this.onFacebookPressed,
     required this.onTelegramPressed,
+    required this.onWaslPressed,
   });
 
   final double scale;
@@ -1249,6 +1253,7 @@ class _BottomDock extends StatelessWidget {
   final VoidCallback onSleepTimerPressed;
   final VoidCallback onFacebookPressed;
   final VoidCallback onTelegramPressed;
+  final VoidCallback onWaslPressed;
 
   @override
   Widget build(BuildContext context) {
@@ -1299,6 +1304,15 @@ class _BottomDock extends StatelessWidget {
               onPressed: onTelegramPressed,
             ),
           ),
+          SizedBox(width: 8 * scale),
+          Expanded(
+            child: _DockAction(
+              assetIcon: 'assets/images/wasl.png',
+              label: 'وصل',
+              scale: scale,
+              onPressed: onWaslPressed,
+            ),
+          ),
         ],
       ),
     );
@@ -1317,13 +1331,15 @@ class _BottomDock extends StatelessWidget {
 
 class _DockAction extends StatelessWidget {
   const _DockAction({
-    required this.icon,
+    this.icon,
+    this.assetIcon,
     required this.label,
     required this.scale,
     required this.onPressed,
   });
 
-  final IconData icon;
+  final IconData? icon;
+  final String? assetIcon;
   final String label;
   final double scale;
   final VoidCallback onPressed;
@@ -1341,7 +1357,18 @@ class _DockAction extends StatelessWidget {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              Icon(icon, color: const Color(0xFFD5C09C), size: 22 * scale),
+              if (assetIcon == null)
+                Icon(
+                  icon,
+                  color: const Color(0xFFD5C09C),
+                  size: 22 * scale,
+                )
+              else
+                ImageIcon(
+                  AssetImage(assetIcon!),
+                  color: const Color(0xFFD5C09C),
+                  size: 22 * scale,
+                ),
               SizedBox(height: 4 * scale),
               Text(
                 label,

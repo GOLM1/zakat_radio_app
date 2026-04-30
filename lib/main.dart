@@ -163,6 +163,7 @@ class _RadioPageState extends State<RadioPage> with WidgetsBindingObserver {
           album: 'صندوق الزكاة الليبي',
           title: 'إذاعة صندوق الزكاة الليبي',
           artist: 'البث المباشر لصندوق الزكاة الليبي',
+          artUri: Uri.parse('asset:///assets/images/now_playing.png'),
         ),
       ),
     );

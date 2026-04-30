@@ -28,3 +28,4 @@ flutter:
   assets:
     - assets/images/logo.png
     - assets/images/wasl.png
+    - assets/images/now_playing.png

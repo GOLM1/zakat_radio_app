@@ -487,7 +487,9 @@ class _RadioPageState extends State<RadioPage> with WidgetsBindingObserver {
                               onTelegramPressed: () =>
                                   _openLink('https://t.me/zakatlibya'),
                               onWaslPressed: () => _openLink(
-                                'https://www.facebook.com/wasl.zakatlibya',
+                                Platform.isAndroid
+                                    ? 'https://play.google.com/store/apps/details?id=ly.gov.zakatfund.wasl'
+                                    : 'https://www.facebook.com/wasl.zakatlibya',
                               ),
                             ),
                           if (!isTelevision) ...[

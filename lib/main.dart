@@ -8,6 +8,7 @@ import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:just_audio/just_audio.dart';
 import 'package:just_audio_background/just_audio_background.dart';
+import 'package:path_provider/path_provider.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 Future<void> main() async {
@@ -182,13 +183,14 @@ class _RadioPageState extends State<RadioPage> with WidgetsBindingObserver {
 
   Future<Uri?> _nowPlayingArtworkUri() async {
     try {
-      final file = File('${Directory.systemTemp.path}/zakat_now_playing.png');
+      final directory = await getApplicationSupportDirectory();
+      final file = File('${directory.path}/zakat_now_playing_v2.png');
       final data = await rootBundle.load('assets/images/now_playing.png');
       await file.writeAsBytes(
         data.buffer.asUint8List(data.offsetInBytes, data.lengthInBytes),
         flush: true,
       );
-      return file.uri;
+      return Uri.file(file.path);
     } catch (_) {
       return null;
     }

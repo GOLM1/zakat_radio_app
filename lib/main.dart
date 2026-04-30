@@ -28,6 +28,11 @@ double _scaleFor(BuildContext context) {
       .toDouble();
 }
 
+bool _isTelevisionLayout(BuildContext context) {
+  final size = MediaQuery.sizeOf(context);
+  return size.width >= 900 && size.width > size.height;
+}
+
 class MyApp extends StatelessWidget {
   const MyApp({super.key});
 
@@ -131,7 +136,9 @@ class _RadioPageState extends State<RadioPage> with WidgetsBindingObserver {
       await session.setActive(true);
 
       for (var attempt = 0; attempt < 2 && _userWantsPlayback; attempt++) {
-        await Future<void>.delayed(Duration(milliseconds: 450 + (attempt * 450)));
+        await Future<void>.delayed(
+          Duration(milliseconds: 450 + (attempt * 450)),
+        );
         if (attempt > 0 || !_isStreamLoaded) {
           await _player.stop();
           _isStreamLoaded = false;
@@ -330,9 +337,81 @@ class _RadioPageState extends State<RadioPage> with WidgetsBindingObserver {
     );
   }
 
+  void _showSleepTimerPicker() {
+    if (_isTelevisionLayout(context)) {
+      _showTvSleepTimerDialog();
+      return;
+    }
+
+    _showSleepTimerSheet();
+  }
+
+  void _showTvSleepTimerDialog() {
+    showDialog<void>(
+      context: context,
+      builder: (context) {
+        return Dialog(
+          backgroundColor: const Color(0xFF0F292D),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(26),
+            side: BorderSide(
+              color: const Color(0xFFD5C09C).withValues(alpha: 0.28),
+            ),
+          ),
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 520),
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(28, 24, 28, 28),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  const Text(
+                    'مؤقت النوم',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                      color: Color(0xFFD5C09C),
+                      fontSize: 28,
+                      fontWeight: FontWeight.w900,
+                    ),
+                  ),
+                  const SizedBox(height: 20),
+                  for (final minutes in const [15, 30, 60])
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 12),
+                      child: _TvSheetOption(
+                        label: 'إيقاف بعد $minutes دقيقة',
+                        icon: Icons.timer_rounded,
+                        onTap: () {
+                          Navigator.pop(context);
+                          _setSleepTimer(Duration(minutes: minutes));
+                        },
+                      ),
+                    ),
+                  if (_sleepDuration != null)
+                    _TvSheetOption(
+                      label: 'إلغاء المؤقت',
+                      icon: Icons.timer_off_rounded,
+                      onTap: () {
+                        Navigator.pop(context);
+                        _cancelSleepTimer();
+                      },
+                    ),
+                ],
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+
   Future<void> _openLink(String url) async {
     final uri = Uri.parse(url);
-    final didLaunch = await launchUrl(uri, mode: LaunchMode.externalApplication);
+    final didLaunch = await launchUrl(
+      uri,
+      mode: LaunchMode.externalApplication,
+    );
     if (!didLaunch && mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
@@ -357,6 +436,7 @@ class _RadioPageState extends State<RadioPage> with WidgetsBindingObserver {
   @override
   Widget build(BuildContext context) {
     final scale = _scaleFor(context);
+    final isTelevision = _isTelevisionLayout(context);
 
     return Scaffold(
       body: Stack(
@@ -372,45 +452,58 @@ class _RadioPageState extends State<RadioPage> with WidgetsBindingObserver {
                     18 * scale,
                     16 * scale,
                   ),
-                  child: ConstrainedBox(
-                    constraints: BoxConstraints(
-                      maxWidth: 620,
-                      minHeight: constraints.maxHeight - (30 * scale),
-                    ),
-                    child: Column(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        _RadioCard(
-                          player: _player,
-                          isBusy: _isBusy,
-                          scale: scale,
-                          onTogglePlay: _togglePlay,
-                        ),
-                        SizedBox(height: 14 * scale),
-                        _BottomDock(
-                          scale: scale,
-                          sleepDuration: _sleepDuration,
-                          sleepRemaining: _sleepRemaining,
-                          onSleepTimerPressed: _showSleepTimerSheet,
-                          onFacebookPressed: () =>
-                              _openLink('https://www.facebook.com/zakatlibya'),
-                          onTelegramPressed: () =>
-                              _openLink('https://t.me/zakatlibya'),
-                          onWaslPressed: () => _openLink(
-                            'https://www.facebook.com/wasl.zakatlibya',
+                  child: Center(
+                    child: ConstrainedBox(
+                      constraints: BoxConstraints(
+                        maxWidth: isTelevision ? 720 : 620,
+                        minHeight: constraints.maxHeight - (30 * scale),
+                      ),
+                      child: Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          _RadioCard(
+                            player: _player,
+                            isBusy: _isBusy,
+                            scale: scale,
+                            onTogglePlay: _togglePlay,
                           ),
-                        ),
-                        SizedBox(height: 10 * scale),
-                        Text(
-                          'صندوق الزكاة الليبي | إذاعة الزكاة',
-                          textAlign: TextAlign.center,
-                          style: TextStyle(
-                            color: Colors.white.withValues(alpha: 0.68),
-                            fontSize: 12.5 * scale,
-                            fontWeight: FontWeight.w500,
-                          ),
-                        ),
-                      ],
+                          SizedBox(height: 14 * scale),
+                          if (isTelevision)
+                            _TvBottomDock(
+                              scale: scale,
+                              sleepDuration: _sleepDuration,
+                              sleepRemaining: _sleepRemaining,
+                              onSleepTimerPressed: _showSleepTimerPicker,
+                            )
+                          else
+                            _BottomDock(
+                              scale: scale,
+                              sleepDuration: _sleepDuration,
+                              sleepRemaining: _sleepRemaining,
+                              onSleepTimerPressed: _showSleepTimerPicker,
+                              onFacebookPressed: () => _openLink(
+                                'https://www.facebook.com/zakatlibya',
+                              ),
+                              onTelegramPressed: () =>
+                                  _openLink('https://t.me/zakatlibya'),
+                              onWaslPressed: () => _openLink(
+                                'https://www.facebook.com/wasl.zakatlibya',
+                              ),
+                            ),
+                          if (!isTelevision) ...[
+                            SizedBox(height: 10 * scale),
+                            Text(
+                              'صندوق الزكاة الليبي | إذاعة الزكاة',
+                              textAlign: TextAlign.center,
+                              style: TextStyle(
+                                color: Colors.white.withValues(alpha: 0.68),
+                                fontSize: 12.5 * scale,
+                                fontWeight: FontWeight.w500,
+                              ),
+                            ),
+                          ],
+                        ],
+                      ),
                     ),
                   ),
                 );
@@ -459,11 +552,7 @@ class _RadioBackgroundState extends State<_RadioBackground>
             gradient: LinearGradient(
               begin: Alignment.topLeft,
               end: Alignment.bottomRight,
-              colors: [
-                Color(0xFF1D4549),
-                Color(0xFF153439),
-                Color(0xFF0F292D),
-              ],
+              colors: [Color(0xFF1D4549), Color(0xFF153439), Color(0xFF0F292D)],
             ),
           ),
           child: Stack(
@@ -569,7 +658,8 @@ class _ParticlesPainter extends CustomPainter {
       final angle = (progress + particle.phase) * math.pi * 2;
       final center = Offset(
         (particle.seedX * size.width) + math.cos(angle) * particle.drift,
-        (particle.seedY * size.height) + math.sin(angle * 0.85) * particle.drift,
+        (particle.seedY * size.height) +
+            math.sin(angle * 0.85) * particle.drift,
       );
       final rect = Rect.fromCircle(center: center, radius: particle.radius);
       final color = particle.phase > 0.55
@@ -632,9 +722,9 @@ class _RadioCard extends StatelessWidget {
         final isPlaying = state?.playing ?? player.playing;
         final isLoading =
             isBusy ||
-                (isPlaying &&
-                    (state?.processingState == ProcessingState.loading ||
-                        state?.processingState == ProcessingState.buffering));
+            (isPlaying &&
+                (state?.processingState == ProcessingState.loading ||
+                    state?.processingState == ProcessingState.buffering));
 
         return ClipRRect(
           borderRadius: BorderRadius.circular(28 * scale),
@@ -798,18 +888,18 @@ class _HeroLogoState extends State<_HeroLogo>
                     gradient: SweepGradient(
                       colors: [
                         const Color(0xFFD5C09C).withValues(alpha: 0.12),
-                        const Color(0xFFD5C09C).withValues(
-                          alpha: isActive ? 0.8 : 0.32,
-                        ),
+                        const Color(
+                          0xFFD5C09C,
+                        ).withValues(alpha: isActive ? 0.8 : 0.32),
                         const Color(0xFF4EA49B).withValues(alpha: 0.16),
                         const Color(0xFFD5C09C).withValues(alpha: 0.12),
                       ],
                     ),
                     boxShadow: [
                       BoxShadow(
-                        color: const Color(0xFFD5C09C).withValues(
-                          alpha: isActive ? 0.24 : 0.12,
-                        ),
+                        color: const Color(
+                          0xFFD5C09C,
+                        ).withValues(alpha: isActive ? 0.24 : 0.12),
                         blurRadius: isActive ? 46 * scale : 28 * scale,
                         offset: Offset(0, 16 * scale),
                       ),
@@ -830,7 +920,10 @@ class _HeroLogoState extends State<_HeroLogo>
                   ),
                 ),
                 child: ClipOval(
-                  child: Image.asset('assets/images/logo.png', fit: BoxFit.cover),
+                  child: Image.asset(
+                    'assets/images/logo.png',
+                    fit: BoxFit.cover,
+                  ),
                 ),
               ),
               Positioned(
@@ -862,10 +955,15 @@ class _HeroStatusChip extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final label = isLoading ? 'جاري الاتصال' : (isPlaying ? 'مباشر الآن' : 'جاهز للبث');
+    final label = isLoading
+        ? 'جاري الاتصال'
+        : (isPlaying ? 'مباشر الآن' : 'جاهز للبث');
 
     return Container(
-      padding: EdgeInsets.symmetric(horizontal: 13 * scale, vertical: 7 * scale),
+      padding: EdgeInsets.symmetric(
+        horizontal: 13 * scale,
+        vertical: 7 * scale,
+      ),
       decoration: BoxDecoration(
         color: const Color(0xFF0F292D).withValues(alpha: 0.86),
         borderRadius: BorderRadius.circular(999),
@@ -1150,11 +1248,7 @@ class _AudioHeader extends StatelessWidget {
             fontWeight: FontWeight.w900,
           ),
         ),
-        _MiniWaves(
-          isPlaying: isPlaying,
-          isLoading: isLoading,
-          scale: scale,
-        ),
+        _MiniWaves(isPlaying: isPlaying, isLoading: isLoading, scale: scale),
       ],
     );
   }
@@ -1256,6 +1350,117 @@ class _MiniWavesState extends State<_MiniWaves>
   }
 }
 
+class _TvBottomDock extends StatelessWidget {
+  const _TvBottomDock({
+    required this.scale,
+    required this.sleepDuration,
+    required this.sleepRemaining,
+    required this.onSleepTimerPressed,
+  });
+
+  final double scale;
+  final Duration? sleepDuration;
+  final Duration? sleepRemaining;
+  final VoidCallback onSleepTimerPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    return Align(
+      alignment: Alignment.center,
+      child: ConstrainedBox(
+        constraints: BoxConstraints(
+          minWidth: 210 * scale,
+          maxWidth: 340 * scale,
+        ),
+        child: _TvTimerButton(
+          icon: sleepDuration == null
+              ? Icons.bedtime_rounded
+              : Icons.timer_rounded,
+          label: _sleepLabel(),
+          scale: scale,
+          onPressed: onSleepTimerPressed,
+        ),
+      ),
+    );
+  }
+
+  String _sleepLabel() {
+    final remainingTime = sleepRemaining ?? sleepDuration;
+    if (remainingTime == null) return 'المؤقت';
+
+    final totalSeconds = remainingTime.inSeconds.clamp(0, 24 * 60 * 60);
+    final minutes = (totalSeconds ~/ 60).toString().padLeft(2, '0');
+    final seconds = (totalSeconds % 60).toString().padLeft(2, '0');
+    return '$minutes:$seconds';
+  }
+}
+
+class _TvTimerButton extends StatelessWidget {
+  const _TvTimerButton({
+    required this.icon,
+    required this.label,
+    required this.scale,
+    required this.onPressed,
+  });
+
+  final IconData icon;
+  final String label;
+  final double scale;
+  final VoidCallback onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: const Color(0xFF0F292D).withValues(alpha: 0.88),
+      borderRadius: BorderRadius.circular(24 * scale),
+      child: InkWell(
+        onTap: onPressed,
+        borderRadius: BorderRadius.circular(24 * scale),
+        child: Container(
+          padding: EdgeInsets.symmetric(
+            horizontal: 28 * scale,
+            vertical: 18 * scale,
+          ),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(24 * scale),
+            border: Border.all(
+              color: const Color(0xFFD5C09C).withValues(alpha: 0.36),
+              width: 1.4,
+            ),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withValues(alpha: 0.22),
+                blurRadius: 24 * scale,
+                offset: Offset(0, 10 * scale),
+              ),
+            ],
+          ),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(icon, color: const Color(0xFFD5C09C), size: 30 * scale),
+              SizedBox(width: 12 * scale),
+              Flexible(
+                child: Text(
+                  label,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontSize: 20 * scale,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 class _BottomDock extends StatelessWidget {
   const _BottomDock({
     required this.scale,
@@ -1279,7 +1484,10 @@ class _BottomDock extends StatelessWidget {
   Widget build(BuildContext context) {
     return Container(
       width: double.infinity,
-      padding: EdgeInsets.symmetric(horizontal: 10 * scale, vertical: 10 * scale),
+      padding: EdgeInsets.symmetric(
+        horizontal: 10 * scale,
+        vertical: 10 * scale,
+      ),
       decoration: BoxDecoration(
         color: const Color(0xFF0F292D).withValues(alpha: 0.72),
         borderRadius: BorderRadius.circular(24 * scale),
@@ -1378,11 +1586,7 @@ class _DockAction extends StatelessWidget {
             mainAxisSize: MainAxisSize.min,
             children: [
               if (assetIcon == null)
-                Icon(
-                  icon,
-                  color: const Color(0xFFD5C09C),
-                  size: 22 * scale,
-                )
+                Icon(icon, color: const Color(0xFFD5C09C), size: 22 * scale)
               else
                 ImageIcon(
                   AssetImage(assetIcon!),
@@ -1399,6 +1603,49 @@ class _DockAction extends StatelessWidget {
                   color: Colors.white.withValues(alpha: 0.86),
                   fontSize: 11.5 * scale,
                   fontWeight: FontWeight.w900,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _TvSheetOption extends StatelessWidget {
+  const _TvSheetOption({
+    required this.label,
+    required this.icon,
+    required this.onTap,
+  });
+
+  final String label;
+  final IconData icon;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: Colors.white.withValues(alpha: 0.07),
+      borderRadius: BorderRadius.circular(18),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(18),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 22, vertical: 18),
+          child: Row(
+            children: [
+              Icon(icon, color: const Color(0xFFD5C09C), size: 32),
+              const SizedBox(width: 16),
+              Expanded(
+                child: Text(
+                  label,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 22,
+                    fontWeight: FontWeight.w900,
+                  ),
                 ),
               ),
             ],

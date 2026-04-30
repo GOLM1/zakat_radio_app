@@ -11,6 +11,6 @@ void main() {
     expect(find.text('البث المباشر'), findsOneWidget);
     expect(find.text('تشغيل البث'), findsOneWidget);
     expect(find.byIcon(Icons.play_arrow_rounded), findsOneWidget);
-    expect(find.byType(Image), findsOneWidget);
+    expect(find.byType(Image), findsNWidgets(2));
   });
 }

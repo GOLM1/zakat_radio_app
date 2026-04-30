@@ -70,7 +70,5 @@
 			<string>UIInterfaceOrientationLandscapeLeft</string>
 			<string>UIInterfaceOrientationLandscapeRight</string>
 		</array>
-		<key>NSMicrophoneUsageDescription</key>
-		<string>This app may require microphone access to support audio and broadcasting features.</string>
 	</dict>
 </plist>

@@ -159,7 +159,7 @@ class _RadioPageState extends State<RadioPage> with WidgetsBindingObserver {
   Future<void> _loadStream() async {
     final artworkUri = await _nowPlayingArtworkUri();
 
-    return _player.setAudioSource(
+    await _player.setAudioSource(
       AudioSource.uri(
         Uri.parse(_streamUrl),
         tag: MediaItem(

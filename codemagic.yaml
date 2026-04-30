@@ -27,7 +27,7 @@ workflows:
       - name: Set up iOS code signing
         script: xcode-project use-profiles
       - name: Build signed iOS IPA
-        script: flutter build ipa --release --build-number=$PROJECT_BUILD_NUMBER
+        script: flutter build ipa --release --build-number=$PROJECT_BUILD_NUMBER --export-options-plist=/Users/builder/export_options.plist
     artifacts:
       - build/ios/ipa/*.ipa
       - /tmp/xcodebuild_logs/*.log
@@ -54,7 +54,7 @@ workflows:
       - name: Set up iOS code signing
         script: xcode-project use-profiles
       - name: Build signed iOS IPA
-        script: flutter build ipa --release --build-number=$PROJECT_BUILD_NUMBER
+        script: flutter build ipa --release --build-number=$PROJECT_BUILD_NUMBER --export-options-plist=/Users/builder/export_options.plist
     artifacts:
       - build/ios/ipa/*.ipa
       - /tmp/xcodebuild_logs/*.log

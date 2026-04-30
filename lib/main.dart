@@ -183,13 +183,11 @@ class _RadioPageState extends State<RadioPage> with WidgetsBindingObserver {
   Future<Uri?> _nowPlayingArtworkUri() async {
     try {
       final file = File('${Directory.systemTemp.path}/zakat_now_playing.png');
-      if (!await file.exists() || await file.length() == 0) {
-        final data = await rootBundle.load('assets/images/now_playing.png');
-        await file.writeAsBytes(
-          data.buffer.asUint8List(data.offsetInBytes, data.lengthInBytes),
-          flush: true,
-        );
-      }
+      final data = await rootBundle.load('assets/images/now_playing.png');
+      await file.writeAsBytes(
+        data.buffer.asUint8List(data.offsetInBytes, data.lengthInBytes),
+        flush: true,
+      );
       return file.uri;
     } catch (_) {
       return null;

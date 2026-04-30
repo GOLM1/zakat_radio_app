@@ -1,8 +1,10 @@
 import 'dart:async';
+import 'dart:io';
 import 'dart:math' as math;
 
 import 'package:audio_session/audio_session.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:just_audio/just_audio.dart';
 import 'package:just_audio_background/just_audio_background.dart';
@@ -154,7 +156,9 @@ class _RadioPageState extends State<RadioPage> with WidgetsBindingObserver {
     }
   }
 
-  Future<void> _loadStream() {
+  Future<void> _loadStream() async {
+    final artworkUri = await _nowPlayingArtworkUri();
+
     return _player.setAudioSource(
       AudioSource.uri(
         Uri.parse(_streamUrl),
@@ -163,10 +167,26 @@ class _RadioPageState extends State<RadioPage> with WidgetsBindingObserver {
           album: 'صندوق الزكاة الليبي',
           title: 'إذاعة صندوق الزكاة الليبي',
           artist: 'البث المباشر لصندوق الزكاة الليبي',
-          artUri: Uri.parse('asset:///assets/images/now_playing.png'),
+          artUri: artworkUri,
         ),
       ),
     );
+  }
+
+  Future<Uri?> _nowPlayingArtworkUri() async {
+    try {
+      final file = File('${Directory.systemTemp.path}/zakat_now_playing.png');
+      if (!await file.exists() || await file.length() == 0) {
+        final data = await rootBundle.load('assets/images/now_playing.png');
+        await file.writeAsBytes(
+          data.buffer.asUint8List(data.offsetInBytes, data.lengthInBytes),
+          flush: true,
+        );
+      }
+      return file.uri;
+    } catch (_) {
+      return null;
+    }
   }
 
   Future<void> _ensureStreamReady() async {

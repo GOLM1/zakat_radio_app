@@ -94,7 +94,6 @@ class _RadioPageState extends State<RadioPage> with WidgetsBindingObserver {
   Future<void> _configureAudioSession() async {
     final session = await AudioSession.instance;
     await session.configure(const AudioSessionConfiguration.music());
-    unawaited(_ensureStreamReady().catchError((_) {}));
 
     _interruptionSubscription = session.interruptionEventStream.listen((event) {
       if (event.begin) {

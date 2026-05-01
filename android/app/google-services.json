@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "645883931282",
+    "project_id": "zakat-radio-app",
+    "storage_bucket": "zakat-radio-app.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:645883931282:android:d1740ebdf184ebef4c944b",
+        "android_client_info": {
+          "package_name": "ly.zakatfund.radioapp"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDgsdwX7Zck2fJCo8Au2jua5G1UFGyErdI"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

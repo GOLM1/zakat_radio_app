@@ -840,11 +840,12 @@ class _RadioPageState extends State<RadioPage> with WidgetsBindingObserver {
   Widget build(BuildContext context) {
     final scale = _scaleFor(context);
     final isTelevision = _isTelevisionLayout(context);
+    final isAndroidTelevision = Platform.isAndroid && isTelevision;
 
     return PopScope(
-      canPop: !isTelevision,
+      canPop: !isAndroidTelevision,
       onPopInvokedWithResult: (didPop, result) {
-        if (didPop || !isTelevision) return;
+        if (didPop || !isAndroidTelevision) return;
         unawaited(_handleTvExitRequest());
       },
       child: Scaffold(
@@ -875,7 +876,7 @@ class _RadioPageState extends State<RadioPage> with WidgetsBindingObserver {
                               isBusy: _isBusy,
                               wantsPlayback: _userWantsPlayback,
                               scale: scale,
-                              showSettingsButton: !isTelevision,
+                              showSettingsButton: !isAndroidTelevision,
                               animateHero: _animateHero,
                               animateLivePill: _animateLivePill,
                               animateWaves: _animateWaves,

@@ -15,6 +15,14 @@ import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
 
+const MethodChannel _nativeChannel = MethodChannel(
+  'ly.zakatfund.radioapp/native',
+);
+const String _waslPackageName = 'ly.gov.zakatfund.wasl';
+const String _waslStoreUrl =
+    'https://play.google.com/store/apps/details?id=$_waslPackageName';
+const String _waslFallbackUrl = 'https://www.facebook.com/wasl.zakatlibya';
+
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await Firebase.initializeApp();
@@ -46,6 +54,8 @@ bool _isTelevisionLayout(BuildContext context) {
 }
 
 enum _MotionQuality { full, balanced, saver }
+
+enum _TvExitAction { keep, stop, cancel }
 
 class MyApp extends StatelessWidget {
   const MyApp({super.key});
@@ -91,6 +101,7 @@ class _RadioPageState extends State<RadioPage> with WidgetsBindingObserver {
   bool _isStreamLoaded = false;
   bool _isPreparingStream = false;
   bool _isRecoveringPlayback = false;
+  bool _isTvExitDialogOpen = false;
   bool _autoPlayOnLaunch = false;
   _MotionQuality _motionQuality = _MotionQuality.balanced;
   AppLifecycleState _lifecycleState = AppLifecycleState.resumed;
@@ -350,6 +361,79 @@ class _RadioPageState extends State<RadioPage> with WidgetsBindingObserver {
     }
   }
 
+  Future<void> _stopPlaybackForExit() async {
+    _userWantsPlayback = false;
+    await _player.stop();
+    _isStreamLoaded = false;
+    if (mounted) setState(() {});
+  }
+
+  Future<void> _handleTvExitRequest() async {
+    if (_isTvExitDialogOpen) return;
+
+    if (!_player.playing && !_userWantsPlayback) {
+      SystemNavigator.pop();
+      return;
+    }
+
+    _isTvExitDialogOpen = true;
+    final action = await showDialog<_TvExitAction>(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          backgroundColor: const Color(0xFF0F292D),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(22),
+            side: BorderSide(
+              color: const Color(0xFFD5C09C).withValues(alpha: 0.32),
+            ),
+          ),
+          title: const Text(
+            'الخروج من التطبيق',
+            textAlign: TextAlign.center,
+            style: TextStyle(
+              color: Color(0xFFD5C09C),
+              fontWeight: FontWeight.w900,
+            ),
+          ),
+          content: const Text(
+            'هل تريد إبقاء البث شغالاً في الخلفية، أم إيقافه قبل الخروج؟',
+            textAlign: TextAlign.center,
+            style: TextStyle(color: Color(0xFFF7F2E8), height: 1.5),
+          ),
+          actionsAlignment: MainAxisAlignment.center,
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context, _TvExitAction.cancel),
+              child: const Text('إلغاء'),
+            ),
+            TextButton(
+              onPressed: () => Navigator.pop(context, _TvExitAction.stop),
+              child: const Text('إيقافه'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(context, _TvExitAction.keep),
+              style: FilledButton.styleFrom(
+                backgroundColor: const Color(0xFFD5C09C),
+                foregroundColor: const Color(0xFF0F292D),
+              ),
+              child: const Text('الخلفية'),
+            ),
+          ],
+        );
+      },
+    );
+    _isTvExitDialogOpen = false;
+
+    if (!mounted || action == null || action == _TvExitAction.cancel) return;
+
+    if (action == _TvExitAction.stop) {
+      await _stopPlaybackForExit();
+    }
+
+    SystemNavigator.pop();
+  }
+
   void _setSleepTimer(Duration duration) {
     _sleepTimer?.cancel();
     _sleepTicker?.cancel();
@@ -537,6 +621,28 @@ class _RadioPageState extends State<RadioPage> with WidgetsBindingObserver {
     }
   }
 
+  Future<void> _openWasl() async {
+    if (Platform.isAndroid) {
+      var openedApp = false;
+      try {
+        openedApp =
+            await _nativeChannel.invokeMethod<bool>(
+              'openApp',
+              _waslPackageName,
+            ) ??
+            false;
+      } catch (_) {
+        openedApp = false;
+      }
+
+      if (openedApp) return;
+      await _openLink(_waslStoreUrl);
+      return;
+    }
+
+    await _openLink(_waslFallbackUrl);
+  }
+
   void _showSettingsSheet() {
     showModalBottomSheet<void>(
       context: context,
@@ -638,37 +744,29 @@ class _RadioPageState extends State<RadioPage> with WidgetsBindingObserver {
                     ),
                     const SizedBox(height: 10),
                     _SheetOption(
-                      label: 'فيسبوك',
-                      icon: Icons.facebook,
+                      label: 'موقع الإذاعة على الويب',
+                      icon: Icons.radio_rounded,
                       onTap: () {
                         Navigator.pop(context);
-                        unawaited(
-                          _openLink('https://www.facebook.com/zakatlibya'),
-                        );
+                        unawaited(_openLink('https://radio.zakatfund.gov.ly/'));
                       },
                     ),
                     const SizedBox(height: 10),
                     _SheetOption(
-                      label: 'تيليجرام',
-                      icon: Icons.send_rounded,
+                      label: 'موقع صندوق الزكاة',
+                      icon: Icons.language_rounded,
                       onTap: () {
                         Navigator.pop(context);
-                        unawaited(_openLink('https://t.me/zakatlibya'));
+                        unawaited(_openLink('https://zakatfund.gov.ly/'));
                       },
                     ),
                     const SizedBox(height: 10),
                     _SheetOption(
-                      label: 'وصل',
-                      icon: Icons.apps_rounded,
+                      label: 'موقع منصة وصل الليبية',
+                      icon: Icons.public_rounded,
                       onTap: () {
                         Navigator.pop(context);
-                        unawaited(
-                          _openLink(
-                            Platform.isAndroid
-                                ? 'https://play.google.com/store/apps/details?id=ly.gov.zakatfund.wasl'
-                                : 'https://www.facebook.com/wasl.zakatlibya',
-                          ),
-                        );
+                        unawaited(_openLink('https://wasl.zakatfund.gov.ly/'));
                       },
                     ),
                     const SizedBox(height: 10),
@@ -743,87 +841,91 @@ class _RadioPageState extends State<RadioPage> with WidgetsBindingObserver {
     final scale = _scaleFor(context);
     final isTelevision = _isTelevisionLayout(context);
 
-    return Scaffold(
-      body: Stack(
-        children: [
-          _RadioBackground(animate: _animateBackground),
-          SafeArea(
-            child: LayoutBuilder(
-              builder: (context, constraints) {
-                return SingleChildScrollView(
-                  padding: EdgeInsets.fromLTRB(
-                    18 * scale,
-                    14 * scale,
-                    18 * scale,
-                    16 * scale,
-                  ),
-                  child: Center(
-                    child: ConstrainedBox(
-                      constraints: BoxConstraints(
-                        maxWidth: isTelevision ? 720 : 620,
-                        minHeight: constraints.maxHeight - (30 * scale),
-                      ),
-                      child: Column(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          _RadioCard(
-                            player: _player,
-                            isBusy: _isBusy,
-                            wantsPlayback: _userWantsPlayback,
-                            scale: scale,
-                            animateHero: _animateHero,
-                            animateLivePill: _animateLivePill,
-                            animateWaves: _animateWaves,
-                            onTogglePlay: _togglePlay,
-                            onSettingsPressed: _showSettingsSheet,
-                            onSettingsHoldComplete: _openAdminLogin,
-                          ),
-                          SizedBox(height: 14 * scale),
-                          if (isTelevision)
-                            _TvBottomDock(
+    return PopScope(
+      canPop: !isTelevision,
+      onPopInvokedWithResult: (didPop, result) {
+        if (didPop || !isTelevision) return;
+        unawaited(_handleTvExitRequest());
+      },
+      child: Scaffold(
+        body: Stack(
+          children: [
+            _RadioBackground(animate: _animateBackground),
+            SafeArea(
+              child: LayoutBuilder(
+                builder: (context, constraints) {
+                  return SingleChildScrollView(
+                    padding: EdgeInsets.fromLTRB(
+                      18 * scale,
+                      14 * scale,
+                      18 * scale,
+                      16 * scale,
+                    ),
+                    child: Center(
+                      child: ConstrainedBox(
+                        constraints: BoxConstraints(
+                          maxWidth: isTelevision ? 720 : 620,
+                          minHeight: constraints.maxHeight - (30 * scale),
+                        ),
+                        child: Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            _RadioCard(
+                              player: _player,
+                              isBusy: _isBusy,
+                              wantsPlayback: _userWantsPlayback,
                               scale: scale,
-                              sleepDuration: _sleepDuration,
-                              sleepRemaining: _sleepRemaining,
-                              onSleepTimerPressed: _showSleepTimerPicker,
-                            )
-                          else
-                            _BottomDock(
-                              scale: scale,
-                              sleepDuration: _sleepDuration,
-                              sleepRemaining: _sleepRemaining,
-                              onSleepTimerPressed: _showSleepTimerPicker,
-                              onFacebookPressed: () => _openLink(
-                                'https://www.facebook.com/zakatlibya',
-                              ),
-                              onTelegramPressed: () =>
-                                  _openLink('https://t.me/zakatlibya'),
-                              onWaslPressed: () => _openLink(
-                                Platform.isAndroid
-                                    ? 'https://play.google.com/store/apps/details?id=ly.gov.zakatfund.wasl'
-                                    : 'https://www.facebook.com/wasl.zakatlibya',
-                              ),
+                              showSettingsButton: !isTelevision,
+                              animateHero: _animateHero,
+                              animateLivePill: _animateLivePill,
+                              animateWaves: _animateWaves,
+                              onTogglePlay: _togglePlay,
+                              onSettingsPressed: _showSettingsSheet,
+                              onSettingsHoldComplete: _openAdminLogin,
                             ),
-                          if (!isTelevision) ...[
-                            SizedBox(height: 10 * scale),
-                            Text(
-                              'صندوق الزكاة الليبي | إذاعة الزكاة',
-                              textAlign: TextAlign.center,
-                              style: TextStyle(
-                                color: Colors.white.withValues(alpha: 0.68),
-                                fontSize: 12.5 * scale,
-                                fontWeight: FontWeight.w500,
+                            SizedBox(height: 14 * scale),
+                            if (isTelevision)
+                              _TvBottomDock(
+                                scale: scale,
+                                sleepDuration: _sleepDuration,
+                                sleepRemaining: _sleepRemaining,
+                                onSleepTimerPressed: _showSleepTimerPicker,
+                              )
+                            else
+                              _BottomDock(
+                                scale: scale,
+                                sleepDuration: _sleepDuration,
+                                sleepRemaining: _sleepRemaining,
+                                onSleepTimerPressed: _showSleepTimerPicker,
+                                onFacebookPressed: () => _openLink(
+                                  'https://www.facebook.com/zakatlibya',
+                                ),
+                                onTelegramPressed: () =>
+                                    _openLink('https://t.me/zakatlibya'),
+                                onWaslPressed: _openWasl,
                               ),
-                            ),
+                            if (!isTelevision) ...[
+                              SizedBox(height: 10 * scale),
+                              Text(
+                                'صندوق الزكاة الليبي | إذاعة الزكاة',
+                                textAlign: TextAlign.center,
+                                style: TextStyle(
+                                  color: Colors.white.withValues(alpha: 0.68),
+                                  fontSize: 12.5 * scale,
+                                  fontWeight: FontWeight.w500,
+                                ),
+                              ),
+                            ],
                           ],
-                        ],
+                        ),
                       ),
                     ),
-                  ),
-                );
-              },
+                  );
+                },
+              ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }
@@ -1037,6 +1139,7 @@ class _RadioCard extends StatelessWidget {
     required this.isBusy,
     required this.wantsPlayback,
     required this.scale,
+    required this.showSettingsButton,
     required this.animateHero,
     required this.animateLivePill,
     required this.animateWaves,
@@ -1049,6 +1152,7 @@ class _RadioCard extends StatelessWidget {
   final bool isBusy;
   final bool wantsPlayback;
   final double scale;
+  final bool showSettingsButton;
   final bool animateHero;
   final bool animateLivePill;
   final bool animateWaves;
@@ -1130,6 +1234,7 @@ class _RadioCard extends StatelessWidget {
                   isPlaying: isPlaying,
                   isLoading: isLoading,
                   scale: scale,
+                  showSettingsButton: showSettingsButton,
                   animateWaves: animateWaves,
                   onTogglePlay: onTogglePlay,
                   onSettingsPressed: onSettingsPressed,
@@ -1438,6 +1543,7 @@ class _AudioBox extends StatelessWidget {
     required this.isPlaying,
     required this.isLoading,
     required this.scale,
+    required this.showSettingsButton,
     required this.animateWaves,
     required this.onTogglePlay,
     required this.onSettingsPressed,
@@ -1447,6 +1553,7 @@ class _AudioBox extends StatelessWidget {
   final bool isPlaying;
   final bool isLoading;
   final double scale;
+  final bool showSettingsButton;
   final bool animateWaves;
   final VoidCallback onTogglePlay;
   final VoidCallback onSettingsPressed;
@@ -1476,12 +1583,14 @@ class _AudioBox extends StatelessWidget {
                   onPressed: onTogglePlay,
                 ),
               ),
-              SizedBox(width: 10 * scale),
-              _AdminHoldArea(
-                onTap: onSettingsPressed,
-                onComplete: onSettingsHoldComplete,
-                child: _SettingsSquareButton(scale: scale, onPressed: () {}),
-              ),
+              if (showSettingsButton) ...[
+                SizedBox(width: 10 * scale),
+                _AdminHoldArea(
+                  onTap: onSettingsPressed,
+                  onComplete: onSettingsHoldComplete,
+                  child: _SettingsSquareButton(scale: scale, onPressed: () {}),
+                ),
+              ],
             ],
           ),
           SizedBox(height: 14 * scale),

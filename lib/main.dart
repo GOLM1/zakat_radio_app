@@ -23,10 +23,17 @@ const String _waslStoreUrl =
     'https://play.google.com/store/apps/details?id=$_waslPackageName';
 const String _waslFallbackUrl = 'https://www.facebook.com/wasl.zakatlibya';
 
+bool _firebaseReady = false;
+
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  await Firebase.initializeApp();
-  FirebaseMessaging.onBackgroundMessage(_firebaseMessagingBackgroundHandler);
+  try {
+    await Firebase.initializeApp();
+    FirebaseMessaging.onBackgroundMessage(_firebaseMessagingBackgroundHandler);
+    _firebaseReady = true;
+  } catch (_) {
+    _firebaseReady = false;
+  }
   await JustAudioBackground.init(
     androidNotificationChannelId: 'ly.zakat.radio.audio',
     androidNotificationChannelName: 'إذاعة صندوق الزكاة الليبي',
@@ -37,7 +44,9 @@ Future<void> main() async {
 
 @pragma('vm:entry-point')
 Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
-  await Firebase.initializeApp();
+  try {
+    await Firebase.initializeApp();
+  } catch (_) {}
 }
 
 double _scaleFor(BuildContext context) {
@@ -173,6 +182,8 @@ class _RadioPageState extends State<RadioPage> with WidgetsBindingObserver {
   }
 
   Future<void> _configureNotifications() async {
+    if (!_firebaseReady) return;
+
     try {
       final messaging = FirebaseMessaging.instance;
       await messaging.requestPermission();

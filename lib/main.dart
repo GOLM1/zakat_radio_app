@@ -4,22 +4,32 @@ import 'dart:math' as math;
 
 import 'package:zakat_radio_app/admin_dashboard.dart';
 import 'package:audio_session/audio_session.dart';
+import 'package:firebase_core/firebase_core.dart';
+import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:just_audio/just_audio.dart';
 import 'package:just_audio_background/just_audio_background.dart';
 import 'package:path_provider/path_provider.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  await Firebase.initializeApp();
+  FirebaseMessaging.onBackgroundMessage(_firebaseMessagingBackgroundHandler);
   await JustAudioBackground.init(
     androidNotificationChannelId: 'ly.zakat.radio.audio',
     androidNotificationChannelName: 'إذاعة صندوق الزكاة الليبي',
     androidNotificationOngoing: true,
   );
   runApp(const MyApp());
+}
+
+@pragma('vm:entry-point')
+Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
+  await Firebase.initializeApp();
 }
 
 double _scaleFor(BuildContext context) {
@@ -34,6 +44,8 @@ bool _isTelevisionLayout(BuildContext context) {
   final size = MediaQuery.sizeOf(context);
   return size.width >= 900 && size.width > size.height;
 }
+
+enum _MotionQuality { full, balanced, saver }
 
 class MyApp extends StatelessWidget {
   const MyApp({super.key});
@@ -79,6 +91,8 @@ class _RadioPageState extends State<RadioPage> with WidgetsBindingObserver {
   bool _isStreamLoaded = false;
   bool _isPreparingStream = false;
   bool _isRecoveringPlayback = false;
+  bool _autoPlayOnLaunch = false;
+  _MotionQuality _motionQuality = _MotionQuality.balanced;
   AppLifecycleState _lifecycleState = AppLifecycleState.resumed;
   StreamSubscription<AudioInterruptionEvent>? _interruptionSubscription;
   StreamSubscription<bool>? _playingSubscription;
@@ -98,6 +112,61 @@ class _RadioPageState extends State<RadioPage> with WidgetsBindingObserver {
       }
     });
     unawaited(_configureAudioSession());
+    unawaited(_configureNotifications());
+    unawaited(_loadUserSettings());
+  }
+
+  bool get _animateBackground =>
+      _motionQuality == _MotionQuality.full ||
+      (!Platform.isAndroid && _motionQuality == _MotionQuality.balanced);
+
+  bool get _animateHero =>
+      _motionQuality == _MotionQuality.full ||
+      (!Platform.isAndroid && _motionQuality == _MotionQuality.balanced);
+
+  bool get _animateLivePill =>
+      _motionQuality == _MotionQuality.full ||
+      (!Platform.isAndroid && _motionQuality == _MotionQuality.balanced);
+
+  bool get _animateWaves => _motionQuality != _MotionQuality.saver;
+
+  Future<void> _loadUserSettings() async {
+    final prefs = await SharedPreferences.getInstance();
+    final savedMotion = prefs.getString('motion_quality');
+    final motionQuality = _MotionQuality.values.firstWhere(
+      (quality) => quality.name == savedMotion,
+      orElse: () => _MotionQuality.balanced,
+    );
+
+    if (!mounted) return;
+    setState(() {
+      _motionQuality = motionQuality;
+      _autoPlayOnLaunch = prefs.getBool('auto_play_on_launch') ?? false;
+    });
+
+    if (_autoPlayOnLaunch) {
+      unawaited(_startPlayback());
+    }
+  }
+
+  Future<void> _saveMotionQuality(_MotionQuality quality) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('motion_quality', quality.name);
+    if (mounted) setState(() => _motionQuality = quality);
+  }
+
+  Future<void> _saveAutoPlay(bool value) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool('auto_play_on_launch', value);
+    if (mounted) setState(() => _autoPlayOnLaunch = value);
+  }
+
+  Future<void> _configureNotifications() async {
+    try {
+      final messaging = FirebaseMessaging.instance;
+      await messaging.requestPermission();
+      await messaging.subscribeToTopic('all');
+    } catch (_) {}
   }
 
   Future<void> _configureAudioSession() async {
@@ -146,7 +215,7 @@ class _RadioPageState extends State<RadioPage> with WidgetsBindingObserver {
           _isStreamLoaded = false;
         }
         await _ensureStreamReady();
-        await _player.play();
+        _playWithoutBlocking();
 
         await Future<void>.delayed(const Duration(milliseconds: 700));
         if (_player.playing) break;
@@ -223,9 +292,7 @@ class _RadioPageState extends State<RadioPage> with WidgetsBindingObserver {
         await _player.stop();
         _isStreamLoaded = false;
       } else {
-        _userWantsPlayback = true;
-        await _ensureStreamReady();
-        unawaited(_player.play());
+        await _startPlayback();
       }
     } catch (_) {
       _userWantsPlayback = false;
@@ -233,6 +300,47 @@ class _RadioPageState extends State<RadioPage> with WidgetsBindingObserver {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
             content: Text('تعذر تشغيل البث حاليا، حاول مرة أخرى.'),
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _isBusy = false);
+    }
+  }
+
+  Future<void> _startPlayback() async {
+    _userWantsPlayback = true;
+    await _ensureStreamReady();
+    _playWithoutBlocking();
+  }
+
+  void _playWithoutBlocking() {
+    unawaited(
+      _player.play().catchError((_) {
+        _userWantsPlayback = false;
+        if (mounted) setState(() {});
+      }),
+    );
+  }
+
+  Future<void> _refreshStream() async {
+    if (_isBusy) return;
+
+    setState(() => _isBusy = true);
+    final shouldResume = _player.playing;
+    try {
+      await _player.stop();
+      _isStreamLoaded = false;
+      _userWantsPlayback = shouldResume;
+      if (shouldResume) {
+        await _startPlayback();
+      }
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('تعذر تحديث البث حاليا.'),
             behavior: SnackBarBehavior.floating,
           ),
         );
@@ -348,9 +456,9 @@ class _RadioPageState extends State<RadioPage> with WidgetsBindingObserver {
   }
 
   void _openAdminLogin() {
-    Navigator.of(context).push(
-      MaterialPageRoute<void>(builder: (_) => const AdminLoginPage()),
-    );
+    Navigator.of(
+      context,
+    ).push(MaterialPageRoute<void>(builder: (_) => const AdminLoginPage()));
   }
 
   void _showTvSleepTimerDialog() {
@@ -429,6 +537,196 @@ class _RadioPageState extends State<RadioPage> with WidgetsBindingObserver {
     }
   }
 
+  void _showSettingsSheet() {
+    showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: const Color(0xFF0F292D),
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(26)),
+      ),
+      builder: (context) {
+        return StatefulBuilder(
+          builder: (context, setSheetState) {
+            return SafeArea(
+              child: SingleChildScrollView(
+                padding: const EdgeInsets.fromLTRB(20, 18, 20, 22),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    const Text(
+                      'الإعدادات',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        color: Color(0xFFD5C09C),
+                        fontSize: 22,
+                        fontWeight: FontWeight.w900,
+                      ),
+                    ),
+                    const SizedBox(height: 18),
+                    const Text(
+                      'جودة الحركة',
+                      style: TextStyle(
+                        color: Color(0xFFEADDBD),
+                        fontSize: 15,
+                        fontWeight: FontWeight.w900,
+                      ),
+                    ),
+                    const SizedBox(height: 10),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: _SettingsChoice(
+                            label: 'كاملة',
+                            selected: _motionQuality == _MotionQuality.full,
+                            onTap: () async {
+                              await _saveMotionQuality(_MotionQuality.full);
+                              setSheetState(() {});
+                            },
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: _SettingsChoice(
+                            label: 'متوازنة',
+                            selected: _motionQuality == _MotionQuality.balanced,
+                            onTap: () async {
+                              await _saveMotionQuality(_MotionQuality.balanced);
+                              setSheetState(() {});
+                            },
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: _SettingsChoice(
+                            label: 'أداء',
+                            selected: _motionQuality == _MotionQuality.saver,
+                            onTap: () async {
+                              await _saveMotionQuality(_MotionQuality.saver);
+                              setSheetState(() {});
+                            },
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 14),
+                    SwitchListTile.adaptive(
+                      value: _autoPlayOnLaunch,
+                      onChanged: (value) async {
+                        await _saveAutoPlay(value);
+                        setSheetState(() {});
+                      },
+                      activeColor: const Color(0xFFD5C09C),
+                      contentPadding: EdgeInsets.zero,
+                      title: const Text(
+                        'تشغيل تلقائي عند فتح التطبيق',
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    _SheetOption(
+                      label: 'تحديث البث',
+                      icon: Icons.refresh_rounded,
+                      onTap: () {
+                        Navigator.pop(context);
+                        unawaited(_refreshStream());
+                      },
+                    ),
+                    const SizedBox(height: 10),
+                    _SheetOption(
+                      label: 'فيسبوك',
+                      icon: Icons.facebook,
+                      onTap: () {
+                        Navigator.pop(context);
+                        unawaited(
+                          _openLink('https://www.facebook.com/zakatlibya'),
+                        );
+                      },
+                    ),
+                    const SizedBox(height: 10),
+                    _SheetOption(
+                      label: 'تيليجرام',
+                      icon: Icons.send_rounded,
+                      onTap: () {
+                        Navigator.pop(context);
+                        unawaited(_openLink('https://t.me/zakatlibya'));
+                      },
+                    ),
+                    const SizedBox(height: 10),
+                    _SheetOption(
+                      label: 'وصل',
+                      icon: Icons.apps_rounded,
+                      onTap: () {
+                        Navigator.pop(context);
+                        unawaited(
+                          _openLink(
+                            Platform.isAndroid
+                                ? 'https://play.google.com/store/apps/details?id=ly.gov.zakatfund.wasl'
+                                : 'https://www.facebook.com/wasl.zakatlibya',
+                          ),
+                        );
+                      },
+                    ),
+                    const SizedBox(height: 10),
+                    _SheetOption(
+                      label: 'حول التطبيق',
+                      icon: Icons.info_outline_rounded,
+                      onTap: () {
+                        Navigator.pop(context);
+                        _showAboutAppDialog();
+                      },
+                    ),
+                  ],
+                ),
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
+
+  void _showAboutAppDialog() {
+    showDialog<void>(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          backgroundColor: const Color(0xFF0F292D),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(22),
+            side: BorderSide(
+              color: const Color(0xFFD5C09C).withValues(alpha: 0.28),
+            ),
+          ),
+          title: const Text(
+            'إذاعة صندوق الزكاة الليبي',
+            textAlign: TextAlign.center,
+            style: TextStyle(
+              color: Color(0xFFD5C09C),
+              fontWeight: FontWeight.w900,
+            ),
+          ),
+          content: const Text(
+            'تطبيق بث مباشر لإذاعة صندوق الزكاة الليبي.\nالإصدار 1.0.0',
+            textAlign: TextAlign.center,
+            style: TextStyle(color: Color(0xFFF7F2E8), height: 1.6),
+          ),
+          actionsAlignment: MainAxisAlignment.center,
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('تم'),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
   @override
   void dispose() {
     _sleepTimer?.cancel();
@@ -448,7 +746,7 @@ class _RadioPageState extends State<RadioPage> with WidgetsBindingObserver {
     return Scaffold(
       body: Stack(
         children: [
-          const _RadioBackground(),
+          _RadioBackground(animate: _animateBackground),
           SafeArea(
             child: LayoutBuilder(
               builder: (context, constraints) {
@@ -471,8 +769,14 @@ class _RadioPageState extends State<RadioPage> with WidgetsBindingObserver {
                           _RadioCard(
                             player: _player,
                             isBusy: _isBusy,
+                            wantsPlayback: _userWantsPlayback,
                             scale: scale,
+                            animateHero: _animateHero,
+                            animateLivePill: _animateLivePill,
+                            animateWaves: _animateWaves,
                             onTogglePlay: _togglePlay,
+                            onSettingsPressed: _showSettingsSheet,
+                            onSettingsHoldComplete: _openAdminLogin,
                           ),
                           SizedBox(height: 14 * scale),
                           if (isTelevision)
@@ -488,7 +792,6 @@ class _RadioPageState extends State<RadioPage> with WidgetsBindingObserver {
                               sleepDuration: _sleepDuration,
                               sleepRemaining: _sleepRemaining,
                               onSleepTimerPressed: _showSleepTimerPicker,
-                              onAdminHoldComplete: _openAdminLogin,
                               onFacebookPressed: () => _openLink(
                                 'https://www.facebook.com/zakatlibya',
                               ),
@@ -527,7 +830,9 @@ class _RadioPageState extends State<RadioPage> with WidgetsBindingObserver {
 }
 
 class _RadioBackground extends StatefulWidget {
-  const _RadioBackground();
+  const _RadioBackground({required this.animate});
+
+  final bool animate;
 
   @override
   State<_RadioBackground> createState() => _RadioBackgroundState();
@@ -543,7 +848,18 @@ class _RadioBackgroundState extends State<_RadioBackground>
     _controller = AnimationController(
       vsync: this,
       duration: const Duration(seconds: 18),
-    )..repeat();
+    );
+    if (widget.animate) _controller.repeat();
+  }
+
+  @override
+  void didUpdateWidget(covariant _RadioBackground oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.animate && !_controller.isAnimating) {
+      _controller.repeat();
+    } else if (!widget.animate && _controller.isAnimating) {
+      _controller.stop();
+    }
   }
 
   @override
@@ -554,53 +870,58 @@ class _RadioBackgroundState extends State<_RadioBackground>
 
   @override
   Widget build(BuildContext context) {
+    if (!widget.animate) return _buildBackground(progress: 0);
+
     return AnimatedBuilder(
       animation: _controller,
-      builder: (context, child) {
-        return DecoratedBox(
-          decoration: const BoxDecoration(
-            gradient: LinearGradient(
-              begin: Alignment.topLeft,
-              end: Alignment.bottomRight,
-              colors: [Color(0xFF1D4549), Color(0xFF153439), Color(0xFF0F292D)],
+      builder: (context, child) =>
+          _buildBackground(progress: _controller.value),
+    );
+  }
+
+  Widget _buildBackground({required double progress}) {
+    return DecoratedBox(
+      decoration: const BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [Color(0xFF1D4549), Color(0xFF153439), Color(0xFF0F292D)],
+        ),
+      ),
+      child: Stack(
+        children: [
+          Positioned(
+            left: -110,
+            top: -120,
+            child: _GlowCircle(
+              size: 280,
+              color: const Color(0xFFD5C09C).withValues(alpha: 0.2),
             ),
           ),
-          child: Stack(
-            children: [
-              Positioned(
-                left: -110,
-                top: -120,
-                child: _GlowCircle(
-                  size: 280,
-                  color: const Color(0xFFD5C09C).withValues(alpha: 0.2),
-                ),
-              ),
-              Positioned(
-                right: -120,
-                bottom: -130,
-                child: _GlowCircle(
-                  size: 310,
-                  color: const Color(0xFF4EA49B).withValues(alpha: 0.18),
-                ),
-              ),
-              Positioned(
-                right: -150,
-                top: 90,
-                child: _RingAccent(size: 240, opacity: 0.12),
-              ),
-              Positioned(
-                left: -130,
-                bottom: 100,
-                child: _RingAccent(size: 190, opacity: 0.08),
-              ),
-              CustomPaint(
-                painter: _ParticlesPainter(progress: _controller.value),
-                size: Size.infinite,
-              ),
-            ],
+          Positioned(
+            right: -120,
+            bottom: -130,
+            child: _GlowCircle(
+              size: 310,
+              color: const Color(0xFF4EA49B).withValues(alpha: 0.18),
+            ),
           ),
-        );
-      },
+          Positioned(
+            right: -150,
+            top: 90,
+            child: _RingAccent(size: 240, opacity: 0.12),
+          ),
+          Positioned(
+            left: -130,
+            bottom: 100,
+            child: _RingAccent(size: 190, opacity: 0.08),
+          ),
+          CustomPaint(
+            painter: _ParticlesPainter(progress: progress),
+            size: Size.infinite,
+          ),
+        ],
+      ),
     );
   }
 }
@@ -714,14 +1035,26 @@ class _RadioCard extends StatelessWidget {
   const _RadioCard({
     required this.player,
     required this.isBusy,
+    required this.wantsPlayback,
     required this.scale,
+    required this.animateHero,
+    required this.animateLivePill,
+    required this.animateWaves,
     required this.onTogglePlay,
+    required this.onSettingsPressed,
+    required this.onSettingsHoldComplete,
   });
 
   final AudioPlayer player;
   final bool isBusy;
+  final bool wantsPlayback;
   final double scale;
+  final bool animateHero;
+  final bool animateLivePill;
+  final bool animateWaves;
   final VoidCallback onTogglePlay;
+  final VoidCallback onSettingsPressed;
+  final VoidCallback onSettingsHoldComplete;
 
   @override
   Widget build(BuildContext context) {
@@ -730,11 +1063,11 @@ class _RadioCard extends StatelessWidget {
       builder: (context, snapshot) {
         final state = snapshot.data;
         final isPlaying = state?.playing ?? player.playing;
+        final isBuffering =
+            state?.processingState == ProcessingState.loading ||
+            state?.processingState == ProcessingState.buffering;
         final isLoading =
-            isBusy ||
-            (isPlaying &&
-                (state?.processingState == ProcessingState.loading ||
-                    state?.processingState == ProcessingState.buffering));
+            wantsPlayback && !isPlaying && (isBusy || isBuffering);
 
         return ClipRRect(
           borderRadius: BorderRadius.circular(28 * scale),
@@ -762,12 +1095,13 @@ class _RadioCard extends StatelessWidget {
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                _LivePill(scale: scale),
+                _LivePill(scale: scale, animate: animateLivePill),
                 SizedBox(height: 14 * scale),
                 _HeroLogo(
                   isPlaying: isPlaying,
                   isLoading: isLoading,
                   scale: scale,
+                  animate: animateHero,
                 ),
                 SizedBox(height: 14 * scale),
                 Text(
@@ -796,7 +1130,10 @@ class _RadioCard extends StatelessWidget {
                   isPlaying: isPlaying,
                   isLoading: isLoading,
                   scale: scale,
+                  animateWaves: animateWaves,
                   onTogglePlay: onTogglePlay,
+                  onSettingsPressed: onSettingsPressed,
+                  onSettingsHoldComplete: onSettingsHoldComplete,
                 ),
               ],
             ),
@@ -812,11 +1149,13 @@ class _HeroLogo extends StatefulWidget {
     required this.isPlaying,
     required this.isLoading,
     required this.scale,
+    required this.animate,
   });
 
   final bool isPlaying;
   final bool isLoading;
   final double scale;
+  final bool animate;
 
   @override
   State<_HeroLogo> createState() => _HeroLogoState();
@@ -833,13 +1172,16 @@ class _HeroLogoState extends State<_HeroLogo>
       vsync: this,
       duration: const Duration(milliseconds: 3200),
     );
-    if (widget.isPlaying || widget.isLoading) _controller.repeat();
+    if (widget.animate && (widget.isPlaying || widget.isLoading)) {
+      _controller.repeat();
+    }
   }
 
   @override
   void didUpdateWidget(covariant _HeroLogo oldWidget) {
     super.didUpdateWidget(oldWidget);
-    final shouldAnimate = widget.isPlaying || widget.isLoading;
+    final shouldAnimate =
+        widget.animate && (widget.isPlaying || widget.isLoading);
     if (shouldAnimate && !_controller.isAnimating) {
       _controller.repeat();
     } else if (!shouldAnimate && _controller.isAnimating) {
@@ -856,7 +1198,7 @@ class _HeroLogoState extends State<_HeroLogo>
   @override
   Widget build(BuildContext context) {
     final scale = widget.scale;
-    final isActive = widget.isPlaying || widget.isLoading;
+    final isActive = widget.animate && (widget.isPlaying || widget.isLoading);
 
     return AnimatedBuilder(
       animation: _controller,
@@ -994,9 +1336,10 @@ class _HeroStatusChip extends StatelessWidget {
 }
 
 class _LivePill extends StatefulWidget {
-  const _LivePill({required this.scale});
+  const _LivePill({required this.scale, required this.animate});
 
   final double scale;
+  final bool animate;
 
   @override
   State<_LivePill> createState() => _LivePillState();
@@ -1014,7 +1357,18 @@ class _LivePillState extends State<_LivePill>
       duration: const Duration(milliseconds: 1600),
       lowerBound: 0.82,
       upperBound: 1,
-    )..repeat(reverse: true);
+    );
+    if (widget.animate) _controller.repeat(reverse: true);
+  }
+
+  @override
+  void didUpdateWidget(covariant _LivePill oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.animate && !_controller.isAnimating) {
+      _controller.repeat(reverse: true);
+    } else if (!widget.animate && _controller.isAnimating) {
+      _controller.stop();
+    }
   }
 
   @override
@@ -1084,13 +1438,19 @@ class _AudioBox extends StatelessWidget {
     required this.isPlaying,
     required this.isLoading,
     required this.scale,
+    required this.animateWaves,
     required this.onTogglePlay,
+    required this.onSettingsPressed,
+    required this.onSettingsHoldComplete,
   });
 
   final bool isPlaying;
   final bool isLoading;
   final double scale;
+  final bool animateWaves;
   final VoidCallback onTogglePlay;
+  final VoidCallback onSettingsPressed;
+  final VoidCallback onSettingsHoldComplete;
 
   @override
   Widget build(BuildContext context) {
@@ -1105,17 +1465,31 @@ class _AudioBox extends StatelessWidget {
       ),
       child: Column(
         children: [
-          _WidePlayButton(
-            isPlaying: isPlaying,
-            isLoading: isLoading,
-            scale: scale,
-            onPressed: onTogglePlay,
+          Row(
+            textDirection: TextDirection.rtl,
+            children: [
+              Expanded(
+                child: _WidePlayButton(
+                  isPlaying: isPlaying,
+                  isLoading: isLoading,
+                  scale: scale,
+                  onPressed: onTogglePlay,
+                ),
+              ),
+              SizedBox(width: 10 * scale),
+              _AdminHoldArea(
+                onTap: onSettingsPressed,
+                onComplete: onSettingsHoldComplete,
+                child: _SettingsSquareButton(scale: scale, onPressed: () {}),
+              ),
+            ],
           ),
           SizedBox(height: 14 * scale),
           _AudioHeader(
             isPlaying: isPlaying,
             isLoading: isLoading,
             scale: scale,
+            animateWaves: animateWaves,
           ),
         ],
       ),
@@ -1192,6 +1566,44 @@ class _WidePlayButton extends StatelessWidget {
   }
 }
 
+class _SettingsSquareButton extends StatelessWidget {
+  const _SettingsSquareButton({required this.scale, required this.onPressed});
+
+  final double scale;
+  final VoidCallback onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    final size = 58 * scale;
+
+    return SizedBox(
+      width: size,
+      height: size,
+      child: Material(
+        color: const Color(0xFF0F292D).withValues(alpha: 0.74),
+        borderRadius: BorderRadius.circular(18 * scale),
+        child: InkWell(
+          onTap: onPressed,
+          borderRadius: BorderRadius.circular(18 * scale),
+          child: Container(
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(18 * scale),
+              border: Border.all(
+                color: const Color(0xFFD5C09C).withValues(alpha: 0.32),
+              ),
+            ),
+            child: Icon(
+              Icons.settings_rounded,
+              color: const Color(0xFFD5C09C),
+              size: 24 * scale,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 class _PlayIcon extends StatelessWidget {
   const _PlayIcon({
     required this.isPlaying,
@@ -1236,11 +1648,13 @@ class _AudioHeader extends StatelessWidget {
     required this.isPlaying,
     required this.isLoading,
     required this.scale,
+    required this.animateWaves,
   });
 
   final bool isPlaying;
   final bool isLoading;
   final double scale;
+  final bool animateWaves;
 
   @override
   Widget build(BuildContext context) {
@@ -1258,7 +1672,12 @@ class _AudioHeader extends StatelessWidget {
             fontWeight: FontWeight.w900,
           ),
         ),
-        _MiniWaves(isPlaying: isPlaying, isLoading: isLoading, scale: scale),
+        _MiniWaves(
+          isPlaying: isPlaying,
+          isLoading: isLoading,
+          scale: scale,
+          animate: animateWaves,
+        ),
       ],
     );
   }
@@ -1269,11 +1688,13 @@ class _MiniWaves extends StatefulWidget {
     required this.isPlaying,
     required this.isLoading,
     required this.scale,
+    required this.animate,
   });
 
   final bool isPlaying;
   final bool isLoading;
   final double scale;
+  final bool animate;
 
   @override
   State<_MiniWaves> createState() => _MiniWavesState();
@@ -1290,13 +1711,16 @@ class _MiniWavesState extends State<_MiniWaves>
       vsync: this,
       duration: const Duration(milliseconds: 1000),
     );
-    if (widget.isPlaying || widget.isLoading) _controller.repeat();
+    if (widget.animate && (widget.isPlaying || widget.isLoading)) {
+      _controller.repeat();
+    }
   }
 
   @override
   void didUpdateWidget(covariant _MiniWaves oldWidget) {
     super.didUpdateWidget(oldWidget);
-    final shouldAnimate = widget.isPlaying || widget.isLoading;
+    final shouldAnimate =
+        widget.animate && (widget.isPlaying || widget.isLoading);
     if (shouldAnimate && !_controller.isAnimating) {
       _controller.repeat();
     } else if (!shouldAnimate && _controller.isAnimating) {
@@ -1312,7 +1736,7 @@ class _MiniWavesState extends State<_MiniWaves>
 
   @override
   Widget build(BuildContext context) {
-    if (widget.isLoading) {
+    if (widget.isLoading && widget.animate) {
       return RotationTransition(
         turns: _controller,
         child: SizedBox(
@@ -1339,7 +1763,7 @@ class _MiniWavesState extends State<_MiniWaves>
               final wave = math.sin(
                 (_controller.value * math.pi * 2) + (index * 0.75),
               );
-              final height = widget.isPlaying
+              final height = widget.isPlaying && widget.animate
                   ? (10 + ((wave + 1) / 2 * 12)) * widget.scale
                   : 10 * widget.scale;
 
@@ -1477,7 +1901,6 @@ class _BottomDock extends StatelessWidget {
     required this.sleepDuration,
     required this.sleepRemaining,
     required this.onSleepTimerPressed,
-    required this.onAdminHoldComplete,
     required this.onFacebookPressed,
     required this.onTelegramPressed,
     required this.onWaslPressed,
@@ -1487,7 +1910,6 @@ class _BottomDock extends StatelessWidget {
   final Duration? sleepDuration;
   final Duration? sleepRemaining;
   final VoidCallback onSleepTimerPressed;
-  final VoidCallback onAdminHoldComplete;
   final VoidCallback onFacebookPressed;
   final VoidCallback onTelegramPressed;
   final VoidCallback onWaslPressed;
@@ -1517,17 +1939,13 @@ class _BottomDock extends StatelessWidget {
       child: Row(
         children: [
           Expanded(
-            child: _AdminHoldArea(
-              onTap: onSleepTimerPressed,
-              onComplete: onAdminHoldComplete,
-              child: _DockAction(
-                icon: sleepDuration == null
-                    ? Icons.bedtime_rounded
-                    : Icons.timer_rounded,
-                label: _sleepLabel(),
-                scale: scale,
-                onPressed: () {},
-              ),
+            child: _DockAction(
+              icon: sleepDuration == null
+                  ? Icons.bedtime_rounded
+                  : Icons.timer_rounded,
+              label: _sleepLabel(),
+              scale: scale,
+              onPressed: onSleepTimerPressed,
             ),
           ),
           SizedBox(width: 8 * scale),
@@ -1756,6 +2174,54 @@ class _SheetOption extends StatelessWidget {
       ),
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
       tileColor: Colors.white.withValues(alpha: 0.06),
+    );
+  }
+}
+
+class _SettingsChoice extends StatelessWidget {
+  const _SettingsChoice({
+    required this.label,
+    required this.selected,
+    required this.onTap,
+  });
+
+  final String label;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: selected
+          ? const Color(0xFFD5C09C)
+          : Colors.white.withValues(alpha: 0.06),
+      borderRadius: BorderRadius.circular(14),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(14),
+        child: Container(
+          padding: const EdgeInsets.symmetric(vertical: 12),
+          alignment: Alignment.center,
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(
+              color: selected
+                  ? const Color(0xFFEADDBD)
+                  : const Color(0xFFD5C09C).withValues(alpha: 0.24),
+            ),
+          ),
+          child: Text(
+            label,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              color: selected ? const Color(0xFF0F292D) : Colors.white,
+              fontWeight: FontWeight.w900,
+              fontSize: 13,
+            ),
+          ),
+        ),
+      ),
     );
   }
 }

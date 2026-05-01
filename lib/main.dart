@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:io';
 import 'dart:math' as math;
 
+import 'package:zakat_radio_app/admin_dashboard.dart';
 import 'package:audio_session/audio_session.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -346,6 +347,12 @@ class _RadioPageState extends State<RadioPage> with WidgetsBindingObserver {
     _showSleepTimerSheet();
   }
 
+  void _openAdminLogin() {
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(builder: (_) => const AdminLoginPage()),
+    );
+  }
+
   void _showTvSleepTimerDialog() {
     showDialog<void>(
       context: context,
@@ -481,6 +488,7 @@ class _RadioPageState extends State<RadioPage> with WidgetsBindingObserver {
                               sleepDuration: _sleepDuration,
                               sleepRemaining: _sleepRemaining,
                               onSleepTimerPressed: _showSleepTimerPicker,
+                              onAdminHoldComplete: _openAdminLogin,
                               onFacebookPressed: () => _openLink(
                                 'https://www.facebook.com/zakatlibya',
                               ),
@@ -1469,6 +1477,7 @@ class _BottomDock extends StatelessWidget {
     required this.sleepDuration,
     required this.sleepRemaining,
     required this.onSleepTimerPressed,
+    required this.onAdminHoldComplete,
     required this.onFacebookPressed,
     required this.onTelegramPressed,
     required this.onWaslPressed,
@@ -1478,6 +1487,7 @@ class _BottomDock extends StatelessWidget {
   final Duration? sleepDuration;
   final Duration? sleepRemaining;
   final VoidCallback onSleepTimerPressed;
+  final VoidCallback onAdminHoldComplete;
   final VoidCallback onFacebookPressed;
   final VoidCallback onTelegramPressed;
   final VoidCallback onWaslPressed;
@@ -1507,13 +1517,17 @@ class _BottomDock extends StatelessWidget {
       child: Row(
         children: [
           Expanded(
-            child: _DockAction(
-              icon: sleepDuration == null
-                  ? Icons.bedtime_rounded
-                  : Icons.timer_rounded,
-              label: _sleepLabel(),
-              scale: scale,
-              onPressed: onSleepTimerPressed,
+            child: _AdminHoldArea(
+              onTap: onSleepTimerPressed,
+              onComplete: onAdminHoldComplete,
+              child: _DockAction(
+                icon: sleepDuration == null
+                    ? Icons.bedtime_rounded
+                    : Icons.timer_rounded,
+                label: _sleepLabel(),
+                scale: scale,
+                onPressed: () {},
+              ),
             ),
           ),
           SizedBox(width: 8 * scale),
@@ -1556,6 +1570,65 @@ class _BottomDock extends StatelessWidget {
     final minutes = (totalSeconds ~/ 60).toString().padLeft(2, '0');
     final seconds = (totalSeconds % 60).toString().padLeft(2, '0');
     return '$minutes:$seconds';
+  }
+}
+
+class _AdminHoldArea extends StatefulWidget {
+  const _AdminHoldArea({
+    required this.child,
+    required this.onTap,
+    required this.onComplete,
+  });
+
+  final Widget child;
+  final VoidCallback onTap;
+  final VoidCallback onComplete;
+
+  @override
+  State<_AdminHoldArea> createState() => _AdminHoldAreaState();
+}
+
+class _AdminHoldAreaState extends State<_AdminHoldArea> {
+  Timer? _holdTimer;
+  bool _suppressNextTap = false;
+
+  void _startHold() {
+    _holdTimer?.cancel();
+    _suppressNextTap = false;
+    _holdTimer = Timer(const Duration(seconds: 10), () {
+      _suppressNextTap = true;
+      HapticFeedback.heavyImpact();
+      widget.onComplete();
+    });
+  }
+
+  void _cancelHold() {
+    _holdTimer?.cancel();
+    _holdTimer = null;
+  }
+
+  @override
+  void dispose() {
+    _cancelHold();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTapDown: (_) => _startHold(),
+      onTapUp: (_) => _cancelHold(),
+      onTapCancel: _cancelHold,
+      onTap: () {
+        if (_suppressNextTap) {
+          _suppressNextTap = false;
+          return;
+        }
+        widget.onTap();
+      },
+      child: IgnorePointer(child: widget.child),
+    );
   }
 }
 
